@@ -11,14 +11,14 @@ export class CatalogService {
     if(existing){requireThat(input.row_version!==undefined&&String(input.row_version)===String(existing.row_version),'PRODUCT_CHANGED',409);}
     const merged={...existing,...input};
     // Numeric rupee aliases from stored DTOs are explicitly validated once.
-    const p=validateProduct(merged);return r.saveProduct(p,existing,actor);
+    const p=validateProduct(merged);requireThat((await r.categories(true)).some(c=>c.id===p.category_id),'INVALID_CATEGORY');return r.saveProduct(p,existing,actor);
   });}
   lifecycle(productId,action,actor){return this.repo.transaction(r=>r.publication(productId,action,actor));}
   saveSubcategory(input,subcategoryId,actor){
-    const category_id=text(input.category_id,100);requireThat(CATEGORIES.some(c=>c.id===category_id),'INVALID_CATEGORY');
+    const category_id=text(input.category_id,100);
     const name=text(input.name,80);requireThat(name.length>=2,'INVALID_SUBCATEGORY_NAME');
     const s={category_id,name,slug:slug(input.slug||name),featured_asset_id:id(input.featured_asset_id),is_active:input.is_active===false?0:1,sort_order:integer(input.sort_order??0,-2147483648)};
-    return this.repo.transaction(r=>r.saveSubcategory(s,subcategoryId,actor));
+    return this.repo.transaction(async r=>{requireThat((await r.categories(true)).some(c=>c.id===category_id),'INVALID_CATEGORY');return r.saveSubcategory(s,subcategoryId,actor);});
   }
   async archiveSubcategory(sid,actor){return this.repo.transaction(async r=>{
     const result=await r.query('UPDATE subcategories SET is_active=0 WHERE id=?',[id(sid)]);requireThat(Number(result.affectedRows)===1,'SUBCATEGORY_NOT_FOUND',404);await r.audit(actor,'subcategory.archive','subcategory',sid);return {success:true};
@@ -30,13 +30,20 @@ export class CatalogService {
       await r.query('INSERT INTO categories(id,name,slug,sort_order) VALUES(?,?,?,?)',[c.id,c.name,c.slug,c.sort_order]);
     }await r.audit(actor,'categories.bootstrap','category','canonical-ten');return r.categories(true);
   });}
+  async createCategory(input,actor){
+    requireThat(Object.keys(input).every(k=>['name','slug','sort_order'].includes(k)),'INVALID_CATEGORY_FIELDS');
+    const name=text(input.name,100),categoryId=slug(input.slug||name);requireThat(categoryId.length<=100,'INVALID_CATEGORY');
+    const sortOrder=integer(input.sort_order??0,-2147483648);
+    return this.repo.transaction(async r=>{await r.query('INSERT INTO categories(id,name,slug,sort_order) VALUES(?,?,?,?)',[categoryId,name,categoryId,sortOrder]);await r.audit(actor,'category.create','category',categoryId);return (await r.categories(true)).find(c=>c.id===categoryId);});
+  }
   async updateCategory(categoryId,input,actor){
-    requireThat(CATEGORIES.some(c=>c.id===categoryId),'INVALID_CATEGORY');
-    requireThat(Object.keys(input).every(k=>['is_active','image_asset_id'].includes(k)),'IMMUTABLE_CATEGORY_IDENTITY');
+    categoryId=text(categoryId,100);
+    requireThat(Object.keys(input).every(k=>['is_active','image_asset_id','name','sort_order'].includes(k)),'IMMUTABLE_CATEGORY_IDENTITY');
     if(input.is_active!==undefined)requireThat(typeof input.is_active==='boolean','INVALID_ACTIVE_FLAG');
+    const name=input.name===undefined?null:text(input.name,100);const sortOrder=input.sort_order===undefined?null:integer(input.sort_order,-2147483648);
     return this.repo.transaction(async r=>{
       if(input.image_asset_id)requireThat((await r.asset(id(input.image_asset_id)))?.state==='ready','IMAGE_NOT_READY');
-      const result=await r.query('UPDATE categories SET is_active=COALESCE(?,is_active),image_asset_id=COALESCE(?,image_asset_id) WHERE id=?',[input.is_active===undefined?null:input.is_active?1:0,input.image_asset_id?id(input.image_asset_id):null,categoryId]);
+      const result=await r.query('UPDATE categories SET is_active=COALESCE(?,is_active),image_asset_id=COALESCE(?,image_asset_id),name=COALESCE(?,name),sort_order=COALESCE(?,sort_order) WHERE id=?',[input.is_active===undefined?null:input.is_active?1:0,input.image_asset_id?id(input.image_asset_id):null,name,sortOrder,categoryId]);
       requireThat(Number(result.affectedRows)===1,'CATEGORY_NOT_FOUND',404);await r.audit(actor,'category.update','category',categoryId);return (await r.categories(true)).find(c=>c.id===categoryId);
     });
   }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp,rm } from 'node:fs/promises';
+import { mkdtemp,rm,stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -26,7 +26,7 @@ for(const value of [-1,0,1.5,1000,NaN,Infinity,'1'])test('cart quantity rejects 
 test('cart merges variant retries but keeps distinct variants',()=>assert.deepEqual(normalizeItems([{product_id:'1',variant_id:'2',quantity:1},{product_id:'1',variant_id:'2',quantity:2}]),[{product_id:'1',variant_id:'2',quantity:3}]));
 for(const field of ['price','amount','shipping','discount'])test('cart rejects authoritative browser field '+field,()=>assert.throws(()=>normalizeItems([{product_id:'1',variant_id:'2',quantity:1,[field]:1}])));
 test('decimal pricing uses exact paise and rejects fractional paise',()=>{assert.equal(paise('10.01'),1001);assert.equal(paise(0.1),10);assert.throws(()=>paise('1.001'));assert.throws(()=>paise('-1'));});
-for(const change of [{category_id:'unknown'},{mrp:1,sale_price:2},{quantity:-1},{variants:[]},{variants:['Gold','gold']},{sku:'bad sku'}])test('product validation rejects '+JSON.stringify(change),()=>assert.throws(()=>validateProduct({...buildTestCatalog().products[0],...change})));
+for(const change of [{category_id:'bad category'},{mrp:1,sale_price:2},{quantity:-1},{variants:[]},{variants:['Gold','gold']},{sku:'bad sku'}])test('product validation rejects '+JSON.stringify(change),()=>assert.throws(()=>validateProduct({...buildTestCatalog().products[0],...change})));
 for(const change of [{MARIADB_DATABASE:'u839831098_mybshoppyDB'},{MARIADB_HOST:'remote.example'},{MARIADB_USER:'root'},{MARIADB_LOCAL_EXECUTION_APPROVED:'false'}])test('database connection guard rejects '+Object.keys(change),()=>assert.throws(()=>databaseConfig({MARIADB_ENABLED:'true',MARIADB_LOCAL_EXECUTION_APPROVED:'true',MARIADB_HOST:'127.0.0.1',MARIADB_DATABASE:'u839831098_phase6btest',MARIADB_USER:'u839831098_phase6btest',MARIADB_PASSWORD:randomBytes(16).toString('hex'),...change})));
 test('database disabled by default creates no pool',()=>assert.equal(databaseConfig({}),null));
 test('adaptive password hash is salted, verifies only matching password',async()=>{const p=randomBytes(20).toString('base64url');const a=await hashPassword(p),b=await hashPassword(p);assert.notEqual(a,b);assert.ok(a.length<=255);assert.equal(await checkPassword(p,a),true);assert.equal(await checkPassword(p+'x',a),false);assert.equal(await checkPassword(p,'invalid'),false);});
@@ -65,9 +65,9 @@ test('API contract: public catalog, protected CRUD, CSRF, publication, archive, 
   const repo=new MemoryTestRepository(true),catalog=new CatalogService(repo),token=randomBytes(32).toString('hex'),password=randomBytes(20).toString('hex');let valid=true;
   const user={id:'1',name:'test-only',role:'Super Admin'};
   const auth={async login(login,p){if(login!=='test-only'||p!==password)throw new Fault(401,'INVALID_CREDENTIALS');return {token,user,csrfToken:csrfFor(token)};},async session(t){if(!valid||t!==token)throw new Fault(401,'AUTH_REQUIRED');return {user,csrfToken:csrfFor(token)};},async logout(){valid=false;}};
-  const directory=await mkdtemp(path.join(tmpdir(),'myb-maria-api-'));const media=new MediaService(repo,directory);
+  const directory=await mkdtemp(path.join(tmpdir(),'myb-maria-api-'));
   const testOrigins=parseTestOrigins({DEPLOYMENT_PROFILE:'isolated-test',TEST_ALLOWED_ORIGINS:'https://test.example'});
-  const app=createCommerceApp({repo,catalog,auth,media,allowedOrigins:['http://localhost:3000',...testOrigins],env:{NODE_ENV:'production'}}),server=app.listen(0,'127.0.0.1');await once(server,'listening');const base='http://127.0.0.1:'+server.address().port;
+  const app=createCommerceApp({repo,catalog,auth,allowedOrigins:['http://localhost:3000',...testOrigins],env:{NODE_ENV:'production',MEDIA_DIRECTORY:directory}}),server=app.listen(0,'127.0.0.1');await once(server,'listening');const base='http://127.0.0.1:'+server.address().port;
   const request=(p,options={})=>fetch(base+p,options);const origin=testOrigins[0];
   try{
     const page=await(await request('/api/v1/products')).json();assert.equal(page.count,100);assert.equal(page.products.length,20);
@@ -95,9 +95,13 @@ test('API contract: public catalog, protected CRUD, CSRF, publication, archive, 
     const png=await sharp({create:{width:8,height:8,channels:3,background:'red'}}).png().toBuffer();const form=new FormData();form.set('image',new Blob([png],{type:'image/png'}),'image.png');
     const upload=await request('/api/v1/admin/media',{method:'POST',headers:{origin,cookie:headers.cookie,'x-csrf-token':headers['x-csrf-token']},body:form});assert.equal(upload.status,201);const asset=(await upload.json()).asset;
     assert.equal((await request(asset.url)).status,200);
+    assert.ok((await stat(path.join(directory,asset.storage_key))).isFile());
+    assert.equal((await new MediaService(repo,directory).locate(asset.storage_key)).file,path.join(directory,asset.storage_key));
     const invalid=new FormData();invalid.set('image',new Blob(['<svg></svg>'],{type:'image/svg+xml'}),'image.svg');assert.equal((await request('/api/v1/admin/media',{method:'POST',headers:{origin,cookie:headers.cookie,'x-csrf-token':headers['x-csrf-token']},body:invalid})).status,422);
     assert.equal((await request('/api/v1/checkout',{method:'POST',headers:{origin,'content-type':'application/json'},body:'{}'})).status,503);
     assert.equal((await request('/api/v1/admin/orders',{method:'POST',headers,body:JSON.stringify({payment_method:'cod'})})).status,404);
     assert.equal((await request('/api/admin/logout',{method:'POST',headers,body:'{}'})).status,200);assert.equal((await request('/api/admin/session',{headers:{cookie:headers.cookie}})).status,401);
   }finally{await new Promise(r=>server.close(r));if(path.dirname(directory)===path.resolve(tmpdir())&&path.basename(directory).startsWith('myb-maria-api-'))await rm(directory,{recursive:true});}
 });
+
+test('custom categories may own products; missing categories are rejected',async()=>{const repo=new MemoryTestRepository(true),catalog=new CatalogService(repo);await catalog.createCategory({name:'Custom Gifts'},'1');const input={...buildTestCatalog().products[0],category_id:'custom-gifts',subcategory_id:null,image_asset_id:'1',sku:'CUSTOM-GIFT'};assert.equal((await catalog.save(input,null,'1')).category_id,'custom-gifts');await assert.rejects(catalog.save({...input,category_id:'missing-category'},null,'1'),/INVALID_CATEGORY/);});

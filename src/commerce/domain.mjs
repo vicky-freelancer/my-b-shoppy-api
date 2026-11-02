@@ -34,16 +34,22 @@ export function canonical(value) {
 export function validateProduct(input) {
   const title=text(input.title??input.name),sku=text(input.sku,191).toUpperCase();
   requireThat(/^[A-Z0-9][A-Z0-9_.-]*$/.test(sku),'INVALID_SKU');
-  const category_id=text(input.category_id,100); requireThat(CATEGORIES.some(c=>c.id===category_id),'INVALID_CATEGORY');
+  const category_id=text(input.category_id,100); requireThat(/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(category_id),'INVALID_CATEGORY');
   const sale_price_paise=paise(input.sale_price),mrp_paise=paise(input.mrp);
   requireThat(mrp_paise>=sale_price_paise,'MRP_BELOW_PRICE');
   const variants=(input.variants??['Standard']).map(v=>text(typeof v==='string'?v:v.label,191));
   requireThat(variants.length>0&&variants.length<=50&&new Set(variants.map(v=>v.toLowerCase())).size===variants.length,'INVALID_VARIANTS');
   const badges=(input.badges??[]).map(v=>text(v,100)); requireThat(badges.length<=20&&new Set(badges).size===badges.length,'INVALID_BADGES');
+  let image_asset_ids;
+  if(input.image_asset_ids!==undefined){
+    requireThat(Array.isArray(input.image_asset_ids)&&input.image_asset_ids.length<=10,'INVALID_PRODUCT_IMAGES');
+    image_asset_ids=input.image_asset_ids.map(id);
+    requireThat(new Set(image_asset_ids).size===image_asset_ids.length,'INVALID_PRODUCT_IMAGES');
+  }
   return {title,sku,slug:slug(input.slug||title),category_id,subcategory_id:input.subcategory_id?id(input.subcategory_id):null,
     sale_price_paise,mrp_paise,quantity:integer(input.quantity??0),variants,badges,
     description:text(input.description,20000,true),subtitle:text(input.subtitle,2000,true),material:text(input.material,255,true),stone:text(input.stone,255,true),
-    image_asset_id:input.image_asset_id?id(input.image_asset_id):null,
+    image_asset_id:input.image_asset_id?id(input.image_asset_id):null,...(image_asset_ids===undefined?{}:{image_asset_ids}),
     rating:input.rating===undefined?0:Number(input.rating),reviews_count:integer(input.reviews_count??0)};
 }
 export function normalizeItems(items) {

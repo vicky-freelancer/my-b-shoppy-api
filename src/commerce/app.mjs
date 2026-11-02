@@ -48,6 +48,7 @@ export function createCommerceApp({database,repo=database?new Repository(databas
   }));
   app.get('/api/v1/products/:key',available,wrap(async(req,res)=>res.set('Cache-Control','no-cache').json({product:await catalog.product(req.params.key)})));
   app.get('/api/v1/admin/categories',wrap(async(_req,res)=>res.json({categories:await catalog.categories(true)})));
+  app.post('/api/v1/admin/categories',wrap(async(req,res)=>res.status(201).json({category:await catalog.createCategory(req.body,req.admin.user.id)})));
   app.post('/api/v1/admin/categories/bootstrap',wrap(async(req,res)=>res.json({categories:await catalog.bootstrap(req.admin.user.id)})));
   app.patch('/api/v1/admin/categories/:id',wrap(async(req,res)=>res.json({category:await catalog.updateCategory(req.params.id,req.body,req.admin.user.id)})));
   app.get('/api/v1/admin/subcategories',wrap(async(_req,res)=>res.json({subcategories:await catalog.subcategories(true)})));

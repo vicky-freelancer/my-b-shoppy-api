@@ -37,7 +37,7 @@ export class Repository {
       quantity:Number(row.on_hand),stock:Number(row.on_hand),reserved_quantity:Number(row.reserved),available_quantity:Number(row.on_hand)-Number(row.reserved),
       in_stock:!!row.is_active&&!row.archived_at&&Number(row.on_hand)>Number(row.reserved)&&variants.some(v=>!!v.is_active),
       variants:variants.filter(v=>!!v.is_active).map(v=>v.label),variant_options:variants.map(v=>({...v,id:String(v.id)})),badges:badges.map(b=>b.label),badge:badges[0]?.label,
-      image_asset_id:images[0]?String(images[0].asset_id):null,image_url:images[0]?'/media/'+images[0].storage_key:'',cover_image:images[0]?'/media/'+images[0].storage_key:'',images};
+      image_asset_id:images[0]?String(images[0].asset_id):null,image_url:images[0]?'/media/'+images[0].storage_key:'',cover_image:images[0]?'/media/'+images[0].storage_key:'',images:images.map(image=>({...image,asset_id:String(image.asset_id),url:'/media/'+image.storage_key}))};
   }
   async product(key,admin=false,lock=false){
     requireThat(typeof key==='string'&&key.length<=191,'INVALID_PRODUCT');
@@ -48,7 +48,7 @@ export class Repository {
   }
   async saveProduct(p,existing,actor){
     if(p.subcategory_id){const [s]=await this.query('SELECT id FROM subcategories WHERE id=? AND category_id=?',[p.subcategory_id,p.category_id]);requireThat(!!s,'SUBCATEGORY_OWNER_MISMATCH');}
-    if(p.image_asset_id)requireThat((await this.asset(p.image_asset_id))?.state==='ready','IMAGE_NOT_READY');
+    for(const assetId of p.image_asset_ids??(p.image_asset_id?[p.image_asset_id]:[]))requireThat((await this.asset(assetId))?.state==='ready','IMAGE_NOT_READY');
     requireThat(p.rating>=0&&p.rating<=5,'INVALID_RATING');
     let productId=existing?.id;
     if(existing){
@@ -65,7 +65,10 @@ export class Repository {
     for(const [position,label] of p.variants.entries())await this.query('INSERT INTO product_variants(product_id,label,is_active,sort_order) VALUES(?,?,1,?) ON DUPLICATE KEY UPDATE is_active=1,sort_order=VALUES(sort_order)',[productId,label,position]);
     await this.query('DELETE FROM product_badges WHERE product_id=?',[productId]);
     for(const [position,label] of p.badges.entries())await this.query('INSERT INTO product_badges(product_id,label,position) VALUES(?,?,?)',[productId,label,position]);
-    if(p.image_asset_id){await this.query('DELETE FROM product_images WHERE product_id=? AND position=0',[productId]);await this.query('INSERT INTO product_images(product_id,position,asset_id) VALUES(?,0,?)',[productId,p.image_asset_id]);}
+    if(p.image_asset_ids!==undefined){
+      await this.query('DELETE FROM product_images WHERE product_id=?',[productId]);
+      for(const [position,assetId] of p.image_asset_ids.entries())await this.query('INSERT INTO product_images(product_id,position,asset_id) VALUES(?,?,?)',[productId,position,assetId]);
+    }else if(p.image_asset_id){await this.query('DELETE FROM product_images WHERE product_id=? AND position=0',[productId]);await this.query('INSERT INTO product_images(product_id,position,asset_id) VALUES(?,0,?)',[productId,p.image_asset_id]);}
     await this.audit(actor,existing?'product.update':'product.create','product',productId); return this.product(productId,true);
   }
   async publication(productId,action,actor){

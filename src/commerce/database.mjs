@@ -18,22 +18,36 @@ export const REQUIRED_COLUMNS = Object.freeze({
   orders: 'id customer_name email phone city address country delivery_notes admin_notes tracking_number status payment_status payment_method currency subtotal_paise shipping_paise total_paise access_token_hash paid_at archived_at created_at updated_at',
   order_items: 'id order_id line_number product_id variant_id title_snapshot sku_snapshot category_snapshot variant_snapshot quantity unit_price_paise mrp_paise line_total_paise',
 });
+const TEST_DATABASE='u839831098_phase6btest';
+const PRODUCTION_DATABASE='u839831098_mybshoppyDB';
+const PRODUCTION_LOCAL_USER='u839831098_adminmybshoppy';
 export function databaseConfig(env) {
   if(env.MARIADB_ENABLED!=='true')return null;
-  if(env.MARIADB_LOCAL_EXECUTION_APPROVED!=='true')throw new Fault(503,'LOCAL_DATABASE_NOT_APPROVED');
-  if(!['127.0.0.1','localhost','::1'].includes(env.MARIADB_HOST)||env.MARIADB_DATABASE!=='u839831098_phase6btest'||env.MARIADB_USER!=='u839831098_phase6btest')throw new Fault(503,'DATABASE_TARGET_REFUSED');
+  const profile=env.MARIADB_PROFILE||'isolated-test';
+  const transport=env.MARIADB_PRODUCTION_TRANSPORT||'remote';
+  if(profile==='isolated-test'){
+    if(env.MARIADB_LOCAL_EXECUTION_APPROVED!=='true')throw new Fault(503,'LOCAL_DATABASE_NOT_APPROVED');
+    if(!['127.0.0.1','localhost','::1'].includes(env.MARIADB_HOST)||env.MARIADB_DATABASE!==TEST_DATABASE||env.MARIADB_USER!==TEST_DATABASE)throw new Fault(503,'DATABASE_TARGET_REFUSED');
+  }else if(profile==='production'){
+    if(env.NODE_ENV!=='production'||env.MARIADB_PRODUCTION_APPROVED!=='true')throw new Fault(503,'PRODUCTION_DATABASE_NOT_APPROVED');
+    // The deployment-owned allowlist admits one explicit production account.
+    if(env.MARIADB_DATABASE!==PRODUCTION_DATABASE||!env.MARIADB_PRODUCTION_ACCOUNT||env.MARIADB_USER!==env.MARIADB_PRODUCTION_ACCOUNT||env.MARIADB_USER===TEST_DATABASE||!/^[A-Za-z0-9_]{1,80}$/.test(env.MARIADB_USER)||!env.MARIADB_HOST||/[\s\/]/.test(env.MARIADB_HOST))throw new Fault(503,'DATABASE_TARGET_REFUSED');
+    if(!['local','remote'].includes(transport))throw new Fault(503,'DATABASE_TRANSPORT_REFUSED');
+    if(transport==='local'&&(env.MARIADB_HOST!=='127.0.0.1'||Number(env.MARIADB_PORT||3306)!==3306||env.MARIADB_USER!==PRODUCTION_LOCAL_USER))throw new Fault(503,'DATABASE_TARGET_REFUSED');
+  }else throw new Fault(503,'DATABASE_PROFILE_REFUSED');
   if(!env.MARIADB_PASSWORD)throw new Fault(503,'DATABASE_CONFIGURATION_INCOMPLETE');
   if(!Number.isInteger(Number(env.MARIADB_PORT||3306))||Number(env.MARIADB_PORT||3306)<1||Number(env.MARIADB_PORT||3306)>65535)throw new Fault(503,'DATABASE_PORT_REFUSED');
   return {host:env.MARIADB_HOST,port:Number(env.MARIADB_PORT||3306),database:env.MARIADB_DATABASE,user:env.MARIADB_USER,password:env.MARIADB_PASSWORD,
+    ...(profile==='production'&&transport==='remote'?{ssl:{rejectUnauthorized:true}}:{}),
     connectionLimit:4,minimumIdle:0,connectTimeout:3000,acquireTimeout:5000,multipleStatements:false,bigIntAsNumber:false,insertIdAsNumber:false,dateStrings:true,timezone:'Z',charset:'utf8mb4'};
 }
 export async function createDatabase(env) {
   const config=databaseConfig(env); if(!config)return null;
   const {default:mariadb}=await import('mariadb'); const pool=mariadb.createPool(config);
-  return new Database(pool);
+  return new Database(pool,{database:config.database,user:config.user,profile:env.MARIADB_PROFILE||'isolated-test'});
 }
 export class Database {
-  constructor(pool){this.pool=pool;}
+  constructor(pool,target={database:TEST_DATABASE,user:TEST_DATABASE,profile:'isolated-test'}){this.pool=pool;this.target=target;}
   async connection(){
     const c=await this.pool.getConnection();
     try{
@@ -41,7 +55,7 @@ export class Database {
       await sql(c,'SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
       await sql(c,'SET SESSION innodb_lock_wait_timeout=5');
       const [s]=await sql(c,'SELECT DATABASE() db,CURRENT_USER() account,VERSION() version,@@session.foreign_key_checks fk,@@session.check_constraint_checks ck,@@session.in_transaction active,@@session.autocommit autocommit,@@session.tx_read_only read_only');
-      if(s.db!=='u839831098_phase6btest'||s.account.split('@')[0]!=='u839831098_phase6btest'||!/^\d+\.\d+\.\d+.*MariaDB/i.test(s.version)||Number(s.fk)!==1||Number(s.ck)!==1||Number(s.active)!==0||Number(s.autocommit)!==1||Number(s.read_only)!==0)throw new Fault(503,'DATABASE_SESSION_REFUSED');
+      if(s.db!==this.target.database||s.account.split('@')[0]!==this.target.user||!/^\d+\.\d+\.\d+.*MariaDB/i.test(s.version)||Number(s.fk)!==1||Number(s.ck)!==1||Number(s.active)!==0||Number(s.autocommit)!==1||Number(s.read_only)!==0)throw new Fault(503,'DATABASE_SESSION_REFUSED');
       const columns=await sql(c,'SELECT TABLE_NAME AS table_name,COLUMN_NAME AS column_name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=?',[s.db]);
       const present=new Set(columns.map(r=>r.table_name+'.'+r.column_name));
       for(const [table,names] of Object.entries(REQUIRED_COLUMNS)){
@@ -61,7 +75,7 @@ export class Database {
       throw e;
     }finally{if(!destroyed)c.release();void committed;}
   }
-  async health(){return this.use(async c=>{await c.query('SELECT 1');return {ready:true,database:'isolated-test'};});}
+  async health(){return this.use(async c=>{await c.query('SELECT 1');return {ready:true,database:this.target.profile};});}
   close(){return this.pool.end();}
 }
 export async function sql(c,statement,values=[]){
