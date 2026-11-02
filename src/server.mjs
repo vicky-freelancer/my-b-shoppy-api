@@ -58,7 +58,7 @@ if (process.env.MARIADB_ENABLED === 'true') {
   const { createDatabase } = await import('./commerce/database.mjs');
   const { createCommerceApp, LOCAL_ORIGINS } = await import('./commerce/app.mjs');
   const database = await createDatabase(process.env);
-  app.use(createCommerceApp({ database, env: process.env, allowedOrigins: [...LOCAL_ORIGINS, ...testOrigins] }));
+  app.use(createCommerceApp({ database, env: process.env, allowedOrigins: ['https://admin.mybshoppy.com', ...LOCAL_ORIGINS, ...testOrigins] }));
 }
 
 // Authenticate exact raw webhook bytes BEFORE JSON parsing. No durable adapter
