@@ -12,12 +12,15 @@ import { Fault,safeJSON } from './domain.mjs';
 export const LOCAL_ORIGINS=['http://localhost:3000','http://127.0.0.1:3000','http://localhost:3001','http://127.0.0.1:3001'];
 const wrap=fn=>(req,res,next)=>Promise.resolve(fn(req,res,next)).catch(next);
 export function createCommerceApp({database,repo=database?new Repository(database):null,catalog=repo?new CatalogService(repo):null,auth=repo?new AuthService(repo):null,
-  media,env={},allowedOrigins=LOCAL_ORIGINS}={}){
+  media,env={},allowedOrigins=LOCAL_ORIGINS,checkout=null,checkoutApi=null,checkoutOrigins=allowedOrigins}={}){
   const app=express();app.disable('x-powered-by');app.set('json replacer',(_k,v)=>typeof v==='bigint'?v.toString():v);
   media??=repo?new MediaService(repo,env.MEDIA_DIRECTORY||path.resolve('var/media')):null;
   const secure=env.NODE_ENV==='production';const cookieName=secure?'__Host-myb_admin':'myb_admin';
   const cookie=(res,name,token,maxAge)=>res.cookie(name,token,{httpOnly:true,secure,sameSite:'strict',path:'/',maxAge});
   const origin=(req,res,next)=>allowedOrigins.includes(req.get('origin'))?next():next(new Fault(403,'ORIGIN_REFUSED'));
+  const checkoutOrigin=(req,res,next)=>checkoutOrigins.includes(req.get('origin'))?next():next(new Fault(403,'ORIGIN_REFUSED'));
+  const checkoutEnabled=!!(checkoutApi&&checkout&&checkout.isEnabled());
+  const checkoutStatus=checkoutApi&&checkout?checkout.status:(_req,res)=>res.set('Cache-Control','no-store').json({enabled:false,code:'CHECKOUT_TEMPORARILY_UNAVAILABLE'});
   const available=(_req,_res,next)=>repo||catalog?next():next(new Fault(503,'MARIADB_NOT_CONFIGURED'));
   const session=wrap(async(req,_res,next)=>{if(!auth)throw new Fault(503,'AUTH_UNAVAILABLE');req.admin=await auth.session(cookieToken(req,cookieName));next();});
   const csrf=(req,_res,next)=>equalHex(req.get('x-csrf-token'),req.admin.csrfToken)?next():next(new Fault(403,'CSRF_REFUSED'));
@@ -28,10 +31,10 @@ export function createCommerceApp({database,repo=database?new Repository(databas
     // or leak driver diagnostics. /api/v1/health remains the readiness probe.
     let ready=false;
     try{ready=(database?await database.health():{ready:!!catalog}).ready===true;}catch{}
-    res.set('Cache-Control','no-store').json({...healthResponse(env),database:{ready},backend:'mariadb',checkoutEnabled:false});
+    res.set('Cache-Control','no-store').json({...healthResponse(env),database:{ready},backend:'mariadb',checkoutEnabled});
   }));
-  app.get('/api/v1/health',wrap(async(_req,res)=>{const state=database?await database.health():{ready:!!catalog};res.status(state.ready?200:503).json({ok:state.ready,backend:'mariadb',checkoutEnabled:false});}));
-  app.get('/api/checkout/status',(_req,res)=>res.set('Cache-Control','no-store').json({enabled:false,code:'CHECKOUT_TEMPORARILY_UNAVAILABLE'}));
+  app.get('/api/v1/health',wrap(async(_req,res)=>{const state=database?await database.health():{ready:!!catalog};res.status(state.ready?200:503).json({ok:state.ready,backend:'mariadb',checkoutEnabled});}));
+  app.get('/api/checkout/status',checkoutStatus);
   for(const prefix of ['/api/admin','/api/v1/admin']){
     app.post(prefix+'/login',origin,wrap(async(req,res)=>{if(!auth)throw new Fault(503,'AUTH_UNAVAILABLE');const result=await auth.login(req.body?.userId,req.body?.password,req.ip);cookie(res,cookieName,result.token,8*3600000);res.set('Cache-Control','no-store').json({user:result.user,csrfToken:result.csrfToken});}));
     app.get(prefix+'/session',session,(req,res)=>res.set('Cache-Control','no-store').json(req.admin));
@@ -66,15 +69,21 @@ export function createCommerceApp({database,repo=database?new Repository(databas
   app.get('/api/v1/admin/orders',wrap(async(req,res)=>res.json(await repo.run(async r=>({orders:await r.orders(req.query),count:await r.orderCount()})))));
   app.patch('/api/v1/admin/orders/:id',wrap(async(req,res)=>res.json(await catalog.updateOrder(req.params.id,req.body,req.admin.user.id))));
   app.delete('/api/v1/admin/orders/:id',wrap(async(req,res)=>res.json(await catalog.updateOrder(req.params.id,{archive:true},req.admin.user.id))));
-  // This catalog schema has no durable payment tables. Never instantiate a
-  // provider or let these requests fall through to legacy payment handlers.
   const paymentsUnavailable=(_req,res)=>res.set('Cache-Control','no-store').set('Retry-After','60').status(503).json({code:'CHECKOUT_TEMPORARILY_UNAVAILABLE',error:'Checkout is temporarily unavailable.'});
   app.post('/api/v1/admin/payments/reconcile',paymentsUnavailable);
-  app.get('/api/v1/checkout/session',origin,paymentsUnavailable);
-  app.post('/api/v1/checkout',origin,paymentsUnavailable);
-  app.get('/api/v1/orders/:id',paymentsUnavailable);
-  app.post('/api/v1/orders/:id/confirm',origin,paymentsUnavailable);
-  app.post(['/api/create-order','/api/verify-payment'],paymentsUnavailable);
+  if(checkoutApi){
+    const checkoutGate=checkout?checkout.guard:paymentsUnavailable;
+    app.get('/api/v1/checkout/session',checkoutOrigin,checkoutGate,wrap(checkoutApi.session));
+    app.post('/api/v1/checkout',checkoutOrigin,checkoutGate,wrap(checkoutApi.create));
+    app.get('/api/v1/orders/:id',wrap(checkoutApi.status));
+    app.post('/api/v1/orders/:id/confirm',checkoutOrigin,wrap(checkoutApi.confirm));
+  }else{
+    app.get('/api/v1/checkout/session',checkoutOrigin,paymentsUnavailable);
+    app.post('/api/v1/checkout',checkoutOrigin,paymentsUnavailable);
+    app.get('/api/v1/orders/:id',paymentsUnavailable);
+    app.post('/api/v1/orders/:id/confirm',checkoutOrigin,paymentsUnavailable);
+    app.post(['/api/create-order','/api/verify-payment'],paymentsUnavailable);
+  }
   app.use((error,_req,res,_next)=>{
     let status=error instanceof Fault?error.status:500,code=error instanceof Fault?error.code:'INTERNAL_ERROR';
     if(error.errno===1062){status=409;code='UNIQUE_CONFLICT';}if(error.errno===1452||error.errno===1451){status=409;code='REFERENCE_CONFLICT';}

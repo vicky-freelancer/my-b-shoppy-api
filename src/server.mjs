@@ -21,7 +21,7 @@ const RAZORPAY_BASE = 'https://api.razorpay.com';
 const PORT = Number(process.env.PORT) || 5000;
 
 const app = express();
-const checkout = createCheckoutControl();
+const checkout = createCheckoutControl({ isReady: () => Boolean(RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET) });
 
 // CORS — this backend is deployed separately from the frontend (api.mybshoppy.com),
 // so browser calls from the storefront domain must be allowed explicitly.
@@ -57,8 +57,16 @@ registerLiveness(app);
 if (process.env.MARIADB_ENABLED === 'true') {
   const { createDatabase } = await import('./commerce/database.mjs');
   const { createCommerceApp, LOCAL_ORIGINS } = await import('./commerce/app.mjs');
+  const { Repository } = await import('./commerce/repository.mjs');
+  const { createLegacyCheckout } = await import('./legacy-checkout.mjs');
   const database = await createDatabase(process.env);
-  app.use(createCommerceApp({ database, env: process.env, allowedOrigins: ['https://admin.mybshoppy.com', ...LOCAL_ORIGINS, ...testOrigins] }));
+  const repo = database ? new Repository(database) : null;
+  const checkoutApi = createLegacyCheckout({ repo, env: process.env });
+  app.use(createCommerceApp({
+    database, repo, checkout, checkoutApi, env: process.env,
+    allowedOrigins: ['https://admin.mybshoppy.com', ...LOCAL_ORIGINS, ...testOrigins],
+    checkoutOrigins: ['https://mybshoppy.com', 'https://admin.mybshoppy.com', ...LOCAL_ORIGINS, ...testOrigins],
+  }));
 }
 
 // Authenticate exact raw webhook bytes BEFORE JSON parsing. No durable adapter

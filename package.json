@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Express API for my B shoppy (Razorpay orders, payment verification, webhooks). Serves the built frontend in production.",
   "scripts": {
-    "test": "node --test src/admin-auth.test.mjs src/server.test.mjs src/payment-security.test.mjs src/checkout-control.test.mjs src/commerce/*.test.mjs",
+    "test": "node --test src/admin-auth.test.mjs src/server.test.mjs src/payment-security.test.mjs src/checkout-control.test.mjs src/legacy-checkout.test.mjs src/commerce/*.test.mjs",
     "start": "node src/server.mjs",
     "server": "node src/server.mjs",
     "dev": "node --watch src/server.mjs",
