@@ -16,7 +16,7 @@ export class MemoryTestRepository {
   async audit(actor,action,type,resource){this.audits.push({actor,action,type,resource});}
   async product(key,admin=false){const p=this.products.get(String(key))||[...this.products.values()].find(p=>p.slug===key);return p&&(admin||(p.is_active&&!p.archived_at))?structuredClone(p):null;}
   async list(o={},admin=false){
-    let all=[...this.products.values()].filter(p=>(admin||p.is_active&&!p.archived_at)&&(!o.categoryId||p.category_id===o.categoryId)&&(!o.subcategoryId||p.subcategory_id===o.subcategoryId)&&(!o.q||(p.title+' '+p.description+' '+p.category).toLowerCase().includes(String(o.q).toLowerCase())));
+    let all=[...this.products.values()].filter(p=>(admin?(o.includeArchived==='true'||!p.archived_at):p.is_active&&!p.archived_at)&&(!o.categoryId||p.category_id===o.categoryId)&&(!o.subcategoryId||p.subcategory_id===o.subcategoryId)&&(!o.q||(p.title+' '+p.description+' '+p.category).toLowerCase().includes(String(o.q).toLowerCase())));
     if(o.featured==='true')all=all.filter(p=>p.badges.length);const sorts={'price-asc':(a,b)=>a.sale_price-b.sale_price,'price-desc':(a,b)=>b.sale_price-a.sale_price};if(sorts[o.sort])all.sort(sorts[o.sort]);
     const size=Number(o.pageSize||20),page=Number(o.page||1);return {products:structuredClone(all.slice((page-1)*size,page*size)),count:all.length};
   }
@@ -30,6 +30,7 @@ export class MemoryTestRepository {
     this.products.set(id,row);await this.audit(actor,'product.save','product',id);return structuredClone(row);
   }
   async publication(id,action,actor){const p=this.products.get(String(id));if(!p)throw new Fault(404,'PRODUCT_NOT_FOUND');if(action==='publish'){requireThat(p.image_asset_id&&p.variants.length&&!p.archived_at,'PRODUCT_NOT_PUBLISHABLE');p.is_active=true;}else if(action==='draft')p.is_active=false;else if(action==='archive'){p.is_active=false;p.archived_at='2026-01-01T00:00:00Z';}else throw new Fault(422,'INVALID_LIFECYCLE');await this.audit(actor,'product.'+action,'product',id);return structuredClone(p);}
+  async deleteProduct(id,actor){if(!this.products.has(String(id)))throw new Fault(404,'PRODUCT_NOT_FOUND');this.products.delete(String(id));await this.audit(actor,'product.delete','product',id);return {success:true,archived:false};}
   async saveSubcategory(s,id){if(!id)id=String(this.subs.length+1);const row={...s,id,storage_key:this.media.get(String(s.featured_asset_id))?.storage_key};const i=this.subs.findIndex(x=>x.id===id);if(i<0)this.subs.push(row);else this.subs[i]=row;return row;}
   async orders(){return [];}
   async orderCount(){return 0;}

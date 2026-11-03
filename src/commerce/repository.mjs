@@ -19,6 +19,7 @@ export class Repository {
     const page=Math.max(1,Math.min(100000,Number(options.page)||1)),size=Math.max(1,Math.min(100,Number(options.pageSize)||20));
     requireThat(Number.isInteger(page)&&Number.isInteger(size),'INVALID_PAGINATION');
     const clauses=[admin?'1=1':PUBLIC],values=[];
+    if(admin&&options.includeArchived!=='true')clauses.push('p.archived_at IS NULL');
     if(options.categoryId){clauses.push('p.category_id=?');values.push(options.categoryId);}
     if(options.subcategoryId){clauses.push('p.subcategory_id=?');values.push(id(options.subcategoryId));}
     if(options.q){requireThat(String(options.q).length<=200,'SEARCH_TOO_LONG');clauses.push("(LOCATE(LOWER(?),LOWER(CONCAT_WS(' ',p.title,p.description,p.material,p.stone,c.name)))>0)");values.push(options.q);}
@@ -78,6 +79,22 @@ export class Repository {
     else if(action==='draft')await this.query('UPDATE products SET is_active=0,row_version=row_version+1 WHERE id=?',[p.id]);
     else throw new Fault(422,'INVALID_LIFECYCLE');
     await this.audit(actor,'product.'+action,'product',p.id);return this.product(p.id,true);
+  }
+  async deleteProduct(productId,actor){
+    const p=await this.product(id(productId),true,true);if(!p)throw new Fault(404,'PRODUCT_NOT_FOUND');
+    const [refs]=await this.query('SELECT COUNT(*) n FROM order_items WHERE product_id=?',[p.id]);
+    if(Number(refs.n)>0){
+      await this.query('UPDATE products SET is_active=0,archived_at=UTC_TIMESTAMP(6),row_version=row_version+1 WHERE id=?',[p.id]);
+      await this.audit(actor,'product.archive','product',p.id,{reason:'order_history'});return {success:true,archived:true};
+    }
+    await this.query('DELETE FROM inventory_movements WHERE product_id=?',[p.id]);
+    await this.query('DELETE FROM inventory WHERE product_id=?',[p.id]);
+    await this.query('DELETE FROM product_images WHERE product_id=?',[p.id]);
+    await this.query('DELETE FROM product_badges WHERE product_id=?',[p.id]);
+    await this.query('DELETE FROM product_aliases WHERE product_id=?',[p.id]);
+    await this.query('DELETE FROM product_variants WHERE product_id=?',[p.id]);
+    await this.query('DELETE FROM products WHERE id=?',[p.id]);
+    await this.audit(actor,'product.delete','product',p.id);return {success:true,archived:false};
   }
   async saveSubcategory(s,existingId,actor){
     requireThat((await this.asset(s.featured_asset_id))?.state==='ready','IMAGE_NOT_READY');

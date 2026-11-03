@@ -91,7 +91,7 @@ test('API contract: public catalog, protected CRUD, CSRF, publication, archive, 
     assert.equal((await request('/api/v1/admin/products/'+pid+'/publish',{method:'POST',headers,body:'{}'})).status,200);
     assert.equal((await(await request('/api/v1/products')).json()).count,101);
     assert.equal((await request('/api/v1/admin/products/'+pid,{method:'PATCH',headers,body:JSON.stringify({...data,row_version:0})})).status,409);
-    assert.equal((await request('/api/v1/admin/products/'+pid,{method:'DELETE',headers})).status,200);assert.equal((await(await request('/api/v1/products')).json()).count,100);assert.ok(repo.products.has(pid));
+    assert.equal((await request('/api/v1/admin/products/'+pid,{method:'DELETE',headers})).status,200);assert.equal((await(await request('/api/v1/products')).json()).count,100);assert.ok(!repo.products.has(pid));
     const png=await sharp({create:{width:8,height:8,channels:3,background:'red'}}).png().toBuffer();const form=new FormData();form.set('image',new Blob([png],{type:'image/png'}),'image.png');
     const upload=await request('/api/v1/admin/media',{method:'POST',headers:{origin,cookie:headers.cookie,'x-csrf-token':headers['x-csrf-token']},body:form});assert.equal(upload.status,201);const asset=(await upload.json()).asset;
     assert.equal((await request(asset.url)).status,200);

@@ -14,6 +14,7 @@ export class CatalogService {
     const p=validateProduct(merged);requireThat((await r.categories(true)).some(c=>c.id===p.category_id),'INVALID_CATEGORY');return r.saveProduct(p,existing,actor);
   });}
   lifecycle(productId,action,actor){return this.repo.transaction(r=>r.publication(productId,action,actor));}
+  deleteProduct(productId,actor){return this.repo.transaction(r=>r.deleteProduct(productId,actor));}
   saveSubcategory(input,subcategoryId,actor){
     const category_id=text(input.category_id,100);
     const name=text(input.name,80);requireThat(name.length>=2,'INVALID_SUBCATEGORY_NAME');
@@ -21,7 +22,12 @@ export class CatalogService {
     return this.repo.transaction(async r=>{requireThat((await r.categories(true)).some(c=>c.id===category_id),'INVALID_CATEGORY');return r.saveSubcategory(s,subcategoryId,actor);});
   }
   async archiveSubcategory(sid,actor){return this.repo.transaction(async r=>{
-    const result=await r.query('UPDATE subcategories SET is_active=0 WHERE id=?',[id(sid)]);requireThat(Number(result.affectedRows)===1,'SUBCATEGORY_NOT_FOUND',404);await r.audit(actor,'subcategory.archive','subcategory',sid);return {success:true};
+    const subcategoryId=id(sid);
+    const [existing]=await r.query('SELECT id FROM subcategories WHERE id=? FOR UPDATE',[subcategoryId]);
+    requireThat(!!existing,'SUBCATEGORY_NOT_FOUND',404);
+    await r.query('UPDATE products SET subcategory_id=NULL WHERE subcategory_id=?',[subcategoryId]);
+    await r.query('DELETE FROM subcategories WHERE id=?',[subcategoryId]);
+    await r.audit(actor,'subcategory.delete','subcategory',subcategoryId);return {success:true};
   });}
   async bootstrap(actor){return this.repo.transaction(async r=>{
     for(const c of CATEGORIES){

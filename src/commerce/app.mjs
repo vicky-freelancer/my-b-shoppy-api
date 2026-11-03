@@ -59,7 +59,7 @@ export function createCommerceApp({database,repo=database?new Repository(databas
   app.post('/api/v1/admin/products',wrap(async(req,res)=>res.status(201).json({product:await catalog.save(req.body,null,req.admin.user.id)})));
   app.patch('/api/v1/admin/products/:id',wrap(async(req,res)=>res.json({product:await catalog.save(req.body,req.params.id,req.admin.user.id)})));
   app.post('/api/v1/admin/products/:id/:action',wrap(async(req,res)=>res.json({product:await catalog.lifecycle(req.params.id,req.params.action,req.admin.user.id)})));
-  app.delete('/api/v1/admin/products/:id',wrap(async(req,res)=>res.json({product:await catalog.lifecycle(req.params.id,'archive',req.admin.user.id)})));
+  app.delete('/api/v1/admin/products/:id',wrap(async(req,res)=>res.json(await catalog.deleteProduct(req.params.id,req.admin.user.id))));
   const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024,files:1,fields:0}});
   app.post('/api/v1/admin/media',upload.single('image'),wrap(async(req,res)=>{if(!media)throw new Fault(503,'MEDIA_UNAVAILABLE');res.status(201).json({asset:await media.upload(req.file?.buffer,req.admin.user.id)});}));
   app.get('/media/:key',wrap(async(req,res)=>{if(!media)throw new Fault(503,'MEDIA_UNAVAILABLE');const a=await media.locate(req.params.key);res.set({'Content-Type':'image/webp','X-Content-Type-Options':'nosniff','Cache-Control':'public,max-age=31536000,immutable',ETag:'"'+a.sha256+'"'}).sendFile(a.file);}));
