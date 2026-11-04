@@ -2,7 +2,63 @@
 
 ## Persistent media
 
-The commerce API already reads `MEDIA_DIRECTORY` when creating its media service. Set it to an absolute path on a persistent, backed-up volume writable by the API process. Uploaded files and `/media/:key` reads use the same directory; media metadata remains in MariaDB. Without the variable the existing default is `var/media` relative to the process working directory. Restarts and releases must retain the same volume and path. Setting a new directory does not migrate existing files: inventory the existing media and plan a separately approved copy and integrity verification before switching. Do not delete the old directory. Multiple API instances need access to the same consistent storage.
+Uploaded files and `/media/:key` reads resolve through the same configured directory; media metadata remains in MariaDB. Resolution happens once when the commerce app is created.
+
+- Set `MEDIA_DIRECTORY` to an absolute path on a persistent, backed-up volume writable by the API process. In production, relative paths are rejected.
+- Production paths inside Hostinger versioned deployment directories (`hbuilds`, `versions`, `releases`) are rejected at startup so a release cannot silently delete media. Keep media outside those directories.
+- If `MEDIA_DIRECTORY` is unset in production, the default is `$HOME/mybshoppy-media` (falling back to `USERPROFILE`/the OS home). This is outside versioned deployment directories, but it must still be writable, backed up, and retained across releases.
+- Development defaults to `var/media` under the process working directory and accepts relative paths.
+- Setting a new directory does not migrate existing files. Restarts and releases must retain the same path. Multiple API instances need access to the same consistent storage.
+
+Recommended Hostinger configuration (set manually in the deployment environment, not by application code):
+
+```
+MEDIA_DIRECTORY=/home/<account>/mybshoppy-media
+```
+
+Confirm that the Node process can create/write files in that directory before entering products. The upload endpoint `/api/v1/admin/media` and the read endpoint `/media/:key` use this same path; existing authentication, CSRF, origin checks, size limits, image signature checks and image re-encoding are unchanged.
+
+### Media diagnostics
+
+- Missing file for an existing `media_assets` row: HTTP `503`, code `MEDIA_FILE_UNAVAILABLE`; server log event `file_missing` with the storage key and no absolute public path.
+- Missing, inaccessible or non-directory media path: HTTP `503`, code `MEDIA_DIRECTORY_UNAVAILABLE`; server log event `directory_unavailable` with a safe reason such as `missing` or `inaccessible`.
+- Corrupt or changed file contents: HTTP `503`, code `MEDIA_INTEGRITY_FAILED`.
+- Invalid/traversal filename: HTTP `404`, code `INVALID_MEDIA_PATH`.
+
+Public error bodies contain only stable codes. Absolute storage paths are never returned to clients.
+
+### Recovering or re-uploading existing missing images
+
+Changing the configuration or deploying this code does **not** recover any existing missing file. Treat an image as recovered only after `/media/<key>` returns `200` and the file matches the `media_assets` `byte_size` and `sha256`.
+
+1. Do not delete `media_assets` or `product_images` records. Do not rewrite `sha256`/`byte_size` to match an unrelated file.
+2. Take a read-only inventory of the expected files (use a separately approved read-only database session):
+
+   ```sql
+   SELECT id, storage_key, byte_size, sha256
+   FROM media_assets
+   WHERE state = 'ready'
+   ORDER BY id;
+   ```
+
+3. Inventory the configured directory on the server:
+
+   ```sh
+   find "$MEDIA_DIRECTORY" -maxdepth 1 -type f -name '*.webp' -printf '%f\n' | sort
+   ```
+
+4. If the file exists in an old build/release directory, search it read-only without deleting anything:
+
+   ```sh
+   find /home/<account>/domains/<domain>/hbuilds -type f -name '<storage_key>.webp' 2>/dev/null
+   ```
+
+   Repeat for `versions`/`releases` only if those directories are in use. Before copying, verify `sha256sum <file>` equals the database `sha256` and the size equals `byte_size`. Copy with `cp -p` into `$MEDIA_DIRECTORY`, leave the source in place, then re-request `/media/<key>`. The server re-checks size and hash on every request.
+
+5. If no verified source file exists, re-upload the image through the authenticated admin media flow (`POST /api/v1/admin/media` or the admin UI) and point the product/category/subcategory at the new asset. This creates a new `media_assets` row and UUID filename; it does not delete or rewrite the old record.
+6. If neither the file nor a source image is available, restore it from an approved backup. Never fabricate an empty/replacement file under an existing storage key.
+
+The specific file `8af76d5f-d017-44ea-8575-550376400da0.webp` must be located and verified or re-uploaded by the operator; this document alone does not confirm its recovery.
 
 ## Production schema inspection — approval required before execution
 

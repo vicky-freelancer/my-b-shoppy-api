@@ -1,10 +1,9 @@
 import express from 'express';
 import multer from 'multer';
-import path from 'node:path';
 import { Repository } from './repository.mjs';
 import { CatalogService } from './catalog.mjs';
 import { AuthService,cookieToken,csrfFor,equalHex } from './auth.mjs';
-import { MediaService } from './media.mjs';
+import { MediaService,resolveMediaDirectory } from './media.mjs';
 import { createRazorpayWebhookHandler } from '../payment-security.mjs';
 import { healthResponse } from '../runtime-config.mjs';
 import { Fault,safeJSON } from './domain.mjs';
@@ -14,7 +13,7 @@ const wrap=fn=>(req,res,next)=>Promise.resolve(fn(req,res,next)).catch(next);
 export function createCommerceApp({database,repo=database?new Repository(database):null,catalog=repo?new CatalogService(repo):null,auth=repo?new AuthService(repo):null,
   media,env={},allowedOrigins=LOCAL_ORIGINS,checkout=null,checkoutApi=null,checkoutOrigins=allowedOrigins}={}){
   const app=express();app.disable('x-powered-by');app.set('json replacer',(_k,v)=>typeof v==='bigint'?v.toString():v);
-  media??=repo?new MediaService(repo,env.MEDIA_DIRECTORY||path.resolve('var/media')):null;
+  media??=repo?new MediaService(repo,resolveMediaDirectory(env).directory):null;
   const secure=env.NODE_ENV==='production';const cookieName=secure?'__Host-myb_admin':'myb_admin';
   const cookie=(res,name,token,maxAge)=>res.cookie(name,token,{httpOnly:true,secure,sameSite:'strict',path:'/',maxAge});
   const origin=(req,res,next)=>allowedOrigins.includes(req.get('origin'))?next():next(new Fault(403,'ORIGIN_REFUSED'));
