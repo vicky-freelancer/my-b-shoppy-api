@@ -66,6 +66,21 @@ test('missing and inaccessible media directories are diagnosed separately',async
   await assert.rejects(blocked.upload(await png(),'1'),e=>e instanceof Fault&&e.status===503&&e.code==='MEDIA_DIRECTORY_UNAVAILABLE');
 });
 
+test('invalid production media directory degrades media without blocking the catalog',async t=>{
+  const repo=new MemoryTestRepository(true);
+  const app=createCommerceApp({repo,env:{NODE_ENV:'production',MEDIA_DIRECTORY:'relative/media'}}),server=app.listen(0,'127.0.0.1');
+  await once(server,'listening');
+  try{
+    const base='http://127.0.0.1:'+server.address().port;
+    const health=await(await fetch(base+'/api/health')).json();
+    assert.deepEqual(health.media,{ready:false,code:'MEDIA_DIRECTORY_NOT_ABSOLUTE'});
+    const categories=await fetch(base+'/api/v1/categories');
+    assert.equal(categories.status,200);
+    assert.equal((await categories.json()).categories.length,10);
+    assert.equal((await fetch(base+'/media/not-a-uuid.webp')).status,503);
+  }finally{server.closeAllConnections?.();await new Promise(resolve=>server.close(resolve));}
+});
+
 test('invalid media filenames are rejected before filesystem access',async t=>{
   const directory=await temporaryDirectory(t),media=new MediaService(new MemoryTestRepository(true),directory);
   for(const key of ['../'+uuid+'.webp',uuid+'.webp/../x','..\\'+uuid+'.webp',uuid+'.WEBP','not-a-uuid.webp',uuid+'.webp\u0000']){

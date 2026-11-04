@@ -13,7 +13,11 @@ const wrap=fn=>(req,res,next)=>Promise.resolve(fn(req,res,next)).catch(next);
 export function createCommerceApp({database,repo=database?new Repository(database):null,catalog=repo?new CatalogService(repo):null,auth=repo?new AuthService(repo):null,
   media,env={},allowedOrigins=LOCAL_ORIGINS,checkout=null,checkoutApi=null,checkoutOrigins=allowedOrigins}={}){
   const app=express();app.disable('x-powered-by');app.set('json replacer',(_k,v)=>typeof v==='bigint'?v.toString():v);
-  media??=repo?new MediaService(repo,resolveMediaDirectory(env).directory):null;
+  let mediaConfigurationError=null;
+  if(media===undefined&&repo){
+    try{media=new MediaService(repo,resolveMediaDirectory(env).directory);}
+    catch(error){media=null;mediaConfigurationError=error;console.error('[media] configuration_unavailable',{code:error?.code||'UNKNOWN'});}
+  }
   const secure=env.NODE_ENV==='production';const cookieName=secure?'__Host-myb_admin':'myb_admin';
   const cookie=(res,name,token,maxAge)=>res.cookie(name,token,{httpOnly:true,secure,sameSite:'strict',path:'/',maxAge});
   const origin=(req,res,next)=>allowedOrigins.includes(req.get('origin'))?next():next(new Fault(403,'ORIGIN_REFUSED'));
@@ -30,7 +34,8 @@ export function createCommerceApp({database,repo=database?new Repository(databas
     // or leak driver diagnostics. /api/v1/health remains the readiness probe.
     let ready=false;
     try{ready=(database?await database.health():{ready:!!catalog}).ready===true;}catch{}
-    res.set('Cache-Control','no-store').json({...healthResponse(env),database:{ready},backend:'mariadb',checkoutEnabled});
+    const mediaReady=mediaConfigurationError?{ready:false,code:mediaConfigurationError.code||'MEDIA_UNAVAILABLE'}:{ready:!!media};
+    res.set('Cache-Control','no-store').json({...healthResponse(env),database:{ready},media:mediaReady,backend:'mariadb',checkoutEnabled});
   }));
   app.get('/api/v1/health',wrap(async(_req,res)=>{const state=database?await database.health():{ready:!!catalog};res.status(state.ready?200:503).json({ok:state.ready,backend:'mariadb',checkoutEnabled});}));
   app.get('/api/checkout/status',checkoutStatus);
