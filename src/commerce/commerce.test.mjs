@@ -86,8 +86,10 @@ test('API contract: public catalog, protected CRUD, CSRF, publication, archive, 
     assert.equal((await request('/api/v1/admin/products',{method:'POST',headers:{...headers,origin:'http://localhost:3000','x-csrf-token':'bad'},body:'{}'})).status,403);
     assert.equal((await request('/api/v1/admin/products',{method:'POST',headers:{...headers,'x-csrf-token':'bad'},body:'{}'})).status,403);
     const data={...buildTestCatalog().products[0],slug:'test-new-product',sku:'TEST-NEW-PRODUCT',image_asset_id:'1',subcategory_id:'1'};
-    const created=await(await request('/api/v1/admin/products',{method:'POST',headers,body:JSON.stringify(data)})).json();assert.equal(created.product.is_active,false);const pid=created.product.id;
-    assert.equal((await(await request('/api/v1/products')).json()).count,100);
+    const created=await(await request('/api/v1/admin/products',{method:'POST',headers,body:JSON.stringify(data)})).json();assert.equal(created.product.is_active,true);const pid=created.product.id;
+    assert.equal((await(await request('/api/v1/products')).json()).count,101);
+    assert.equal((await request('/api/v1/admin/products/'+pid+'/draft',{method:'POST',headers,body:'{}'})).status,422);
+    assert.equal((await request('/api/v1/admin/products',{method:'POST',headers,body:JSON.stringify({...data,sku:'TEST-NO-IMAGE',slug:'test-no-image',image_asset_id:null})})).status,422);
     assert.equal((await request('/api/v1/admin/products/'+pid+'/publish',{method:'POST',headers,body:'{}'})).status,200);
     assert.equal((await(await request('/api/v1/products')).json()).count,101);
     assert.equal((await request('/api/v1/admin/products/'+pid,{method:'PATCH',headers,body:JSON.stringify({...data,row_version:0})})).status,409);

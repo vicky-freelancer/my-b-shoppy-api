@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 export const CATEGORIES = Object.freeze([
   ['ad-jewellery','AD Jewellery'], ['hair-accessories','Hair Accessories'],
-  ['anti-tarnish-jewellery','Anti Tarnish Jewellery'], ['ear-rings','Ear Rings'],
+  ['anti-tarnish-jewellery','Anti Tarnish Jewellery'], ['ear-rings','Earrings'],
   ['bows-and-scrunchies','Bows & Scrunchies'], ['bags','Bags'], ['mobile-charms','Mobile Charms'],
   ['key-chains','Key Chains'], ['men-accessories','Mens Accessories'], ['stationery-and-gifts','Stationery & Gifts'],
 ].map(([id,name],sort_order)=>Object.freeze({id,name,slug:id,sort_order,is_active:true})));
